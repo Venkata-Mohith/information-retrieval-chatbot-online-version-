@@ -11,14 +11,17 @@ from langchain_core.prompts import PromptTemplate
 
 from sentence_transformers import SentenceTransformer
 
-
 # -------------------------------------------------
 # Basic setup
 # -------------------------------------------------
 warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO)
 
-st.set_page_config(page_title="DRDO Missile Systems Chatbot", layout="centered")
+st.set_page_config(
+    page_title="DRDO Missile Systems Chatbot",
+    page_icon="🚀",
+    layout="centered"
+)
 
 # -------------------------------------------------
 # Embeddings
@@ -28,10 +31,10 @@ class LocalSentenceTransformerEmbeddings:
         self.model = SentenceTransformer("all-MiniLM-L6-v2")
 
     def embed_documents(self, texts):
-        return self.model.encode(texts).tolist()
+        return self.model.encode(texts, show_progress_bar=False).tolist()
 
     def embed_query(self, text):
-        return self.model.encode([text])[0].tolist()
+        return self.model.encode([text], show_progress_bar=False)[0].tolist()
 
 # -------------------------------------------------
 # Load PDFs
@@ -52,30 +55,36 @@ def load_pdfs():
 @st.cache_resource
 def setup_vector_store():
     embeddings = LocalSentenceTransformerEmbeddings()
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200
+    )
 
     persist_dir = "chroma_db"
+    pdfs = load_pdfs()
 
-    if os.path.exists(persist_dir):
-        db = Chroma(persist_directory=persist_dir, embedding_function=embeddings)
-    else:
-        docs = []
-        for pdf in load_pdfs():
-            loader = PyMuPDFLoader(pdf)
-            docs.extend(loader.load())
+    if not pdfs:
+        st.warning("No PDFs found. General questions will still work.")
+        return None
 
-        chunks = splitter.split_documents(docs)
-        db = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=persist_dir
-        )
-        
+    docs = []
+    for pdf in pdfs:
+        loader = PyMuPDFLoader(pdf)
+        docs.extend(loader.load())
+
+    chunks = splitter.split_documents(docs)
+
+    db = Chroma.from_documents(
+        documents=chunks,
+        embedding=embeddings,
+        persist_directory=persist_dir
+    )
+
     st.success("Vector store ready")
     return db.as_retriever(search_kwargs={"k": 3})
 
 # -------------------------------------------------
-# LLM
+# LLM (Groq)
 # -------------------------------------------------
 @st.cache_resource
 def get_llm():
@@ -90,7 +99,7 @@ def get_llm():
     )
 
 # -------------------------------------------------
-# Prompt
+# Prompts
 # -------------------------------------------------
 rag_prompt = PromptTemplate(
     template="""
@@ -110,10 +119,29 @@ Answer:
     input_variables=["context", "question"]
 )
 
+fallback_prompt = PromptTemplate(
+    template="""
+Answer the following question using general knowledge.
+Be concise and accurate.
+
+Question:
+{question}
+
+Answer:
+""",
+    input_variables=["question"]
+)
+
 # -------------------------------------------------
-# RAG logic (NO CHAINS)
+# Response Logic (HYBRID)
 # -------------------------------------------------
 def get_bot_response(question, retriever, llm):
+    # If no PDFs exist → direct general answer
+    if retriever is None:
+        return llm.invoke(
+            fallback_prompt.format(question=question)
+        ).content
+
     docs = retriever.invoke(question)
     context = "\n\n".join([d.page_content for d in docs])
 
@@ -122,14 +150,21 @@ def get_bot_response(question, retriever, llm):
         question=question
     )
 
-    response = llm.invoke(prompt)
-    return response.content
+    response = llm.invoke(prompt).content
+
+    # If PDF doesn't contain answer → fallback
+    if "I can only answer based on the provided documents" in response:
+        return llm.invoke(
+            fallback_prompt.format(question=question)
+        ).content
+
+    return response
 
 # -------------------------------------------------
 # Streamlit UI
 # -------------------------------------------------
 st.title("🚀 DRDO Missile Systems Chatbot")
-st.write("Ask questions based on missile-related PDFs.")
+st.write("Ask questions based on missile-related PDFs or general knowledge.")
 
 with st.sidebar:
     st.header("Setup")
@@ -148,8 +183,10 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if user_input := st.chat_input("Ask a question about missiles"):
-    st.session_state.messages.append({"role": "user", "content": user_input})
+if user_input := st.chat_input("Ask a question about missiles or general topics"):
+    st.session_state.messages.append(
+        {"role": "user", "content": user_input}
+    )
 
     with st.chat_message("user"):
         st.markdown(user_input)
