@@ -18,8 +18,8 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO)
 
 st.set_page_config(
-    page_title="Chatbot System for information retrieval [online-version]",
-    page_icon="🚀",
+    page_title="Chatbot System for Information Retrieval (Online Version)",
+    page_icon="🤖",
     layout="centered"
 )
 
@@ -103,8 +103,7 @@ def get_llm():
 # -------------------------------------------------
 rag_prompt = PromptTemplate(
     template="""
-You are a DRDO missile systems expert.
-Answer ONLY using the provided context.
+Answer the question ONLY using the provided context.
 If the answer is not present, say:
 "I can only answer based on the provided documents."
 
@@ -136,7 +135,6 @@ Answer:
 # Response Logic (HYBRID)
 # -------------------------------------------------
 def get_bot_response(question, retriever, llm):
-    # If no PDFs exist → direct general answer
     if retriever is None:
         return llm.invoke(
             fallback_prompt.format(question=question)
@@ -152,7 +150,6 @@ def get_bot_response(question, retriever, llm):
 
     response = llm.invoke(prompt).content
 
-    # If PDF doesn't contain answer → fallback
     if "I can only answer based on the provided documents" in response:
         return llm.invoke(
             fallback_prompt.format(question=question)
@@ -163,8 +160,8 @@ def get_bot_response(question, retriever, llm):
 # -------------------------------------------------
 # Streamlit UI
 # -------------------------------------------------
-st.title("🚀 DRDO Missile Systems Chatbot")
-st.write("Ask questions based on missile-related PDFs or general knowledge.")
+st.title("🤖 Chatbot System for Information Retrieval (Online Version)")
+st.write("Ask questions based on uploaded documents or general knowledge.")
 
 with st.sidebar:
     st.header("Setup")
@@ -183,7 +180,7 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if user_input := st.chat_input("Ask a question about missiles or general topics"):
+if user_input := st.chat_input("Ask a question"):
     st.session_state.messages.append(
         {"role": "user", "content": user_input}
     )
