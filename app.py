@@ -1,27 +1,24 @@
 import streamlit as st
 import os
 from dotenv import load_dotenv
-import logging
-import time
 import warnings
+import time
+import logging
 
-from langchain_community.document_loaders import PyMuPDFLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_chroma import Chroma
-from langchain_groq import ChatGroq
+from langchain.document_loaders import PyMuPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.vectorstores import Chroma
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
+from langchain_groq import ChatGroq
 
-# -------------------------------------------------
-# Basic setup
-# -------------------------------------------------
 warnings.filterwarnings("ignore")
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
 
-# -------------------------------------------------
+# -----------------------------
 # Embeddings
-# -------------------------------------------------
+# -----------------------------
 class LocalSentenceTransformerEmbeddings:
     def __init__(self):
         from sentence_transformers import SentenceTransformer
@@ -30,80 +27,65 @@ class LocalSentenceTransformerEmbeddings:
         logging.info(f"Embeddings loaded in {time.time() - start:.2f}s")
 
     def embed_documents(self, texts):
-        return self.model.encode(texts, show_progress_bar=False).tolist()
+        return self.model.encode(texts).tolist()
 
     def embed_query(self, text):
-        return self.model.encode([text], show_progress_bar=False).tolist()[0]
+        return self.model.encode([text]).tolist()[0]
 
-# -------------------------------------------------
+# -----------------------------
 # Load PDFs
-# -------------------------------------------------
+# -----------------------------
 def load_pdfs():
     pdf_dir = "missile_pdfs"
     os.makedirs(pdf_dir, exist_ok=True)
+    return [
+        os.path.join(pdf_dir, f)
+        for f in os.listdir(pdf_dir)
+        if f.endswith(".pdf")
+    ]
 
-    pdfs = []
-    for file in os.listdir(pdf_dir):
-        if file.endswith(".pdf"):
-            pdfs.append(os.path.join(pdf_dir, file))
-
-    if not pdfs:
-        st.warning("No PDFs found in missile_pdfs/")
-    return pdfs
-
-# -------------------------------------------------
-# Text splitter
-# -------------------------------------------------
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=200
-)
-
-# -------------------------------------------------
-# Vector store
-# -------------------------------------------------
+# -----------------------------
+# Vector Store
+# -----------------------------
 @st.cache_resource
 def setup_vector_store():
     embeddings = LocalSentenceTransformerEmbeddings()
     persist_dir = "chroma_db"
 
     if os.path.exists(persist_dir):
-        vector_store = Chroma(
+        db = Chroma(
             persist_directory=persist_dir,
             embedding_function=embeddings
         )
     else:
-        st.info("Building new Chroma DB...")
         docs = []
         for pdf in load_pdfs():
             loader = PyMuPDFLoader(pdf)
             docs.extend(loader.load())
 
-        if docs:
-            chunks = text_splitter.split_documents(docs)
-            vector_store = Chroma.from_documents(
-                documents=chunks,
-                embedding=embeddings,
-                persist_directory=persist_dir
-            )
-            vector_store.persist()
-        else:
-            vector_store = Chroma(
-                embedding_function=embeddings,
-                persist_directory=persist_dir
-            )
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200
+        )
+        chunks = splitter.split_documents(docs)
 
-    st.success("Vector store ready")
-    return vector_store.as_retriever(search_kwargs={"k": 3})
+        db = Chroma.from_documents(
+            chunks,
+            embeddings,
+            persist_directory=persist_dir
+        )
+        db.persist()
 
-# -------------------------------------------------
-# LLM (Groq)
-# -------------------------------------------------
+    return db.as_retriever(search_kwargs={"k": 3})
+
+# -----------------------------
+# LLM
+# -----------------------------
 @st.cache_resource
 def get_llm():
     api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        st.error("GROQ_API_KEY not found. Add it to Streamlit secrets.")
+        st.error("GROQ_API_KEY missing in Streamlit secrets")
         st.stop()
 
     return ChatGroq(
@@ -111,14 +93,13 @@ def get_llm():
         model_name="llama-3.1-8b-instant"
     )
 
-# -------------------------------------------------
+# -----------------------------
 # Prompt
-# -------------------------------------------------
-rag_prompt = PromptTemplate(
+# -----------------------------
+PROMPT = PromptTemplate(
     template="""
-You are a DRDO missile systems expert.
-Answer ONLY using the provided context.
-If the answer is not present, say:
+Use ONLY the context below to answer.
+If not found, say:
 "I can only answer based on the provided documents."
 
 Context:
@@ -132,11 +113,11 @@ Answer:
     input_variables=["context", "question"]
 )
 
-# -------------------------------------------------
-# QA Chain (STABLE)
-# -------------------------------------------------
+# -----------------------------
+# QA Chain
+# -----------------------------
 @st.cache_resource
-def initialize_qa_chain():
+def init_qa():
     retriever = setup_vector_store()
     llm = get_llm()
 
@@ -144,42 +125,30 @@ def initialize_qa_chain():
         llm=llm,
         retriever=retriever,
         chain_type="stuff",
-        chain_type_kwargs={"prompt": rag_prompt},
-        return_source_documents=False
+        chain_type_kwargs={"prompt": PROMPT}
     )
 
-# -------------------------------------------------
-# Streamlit UI
-# -------------------------------------------------
+# -----------------------------
+# UI
+# -----------------------------
 st.title("🚀 DRDO Missile Systems Chatbot")
-st.write("Ask questions based on missile-related PDFs.")
 
-with st.sidebar:
-    st.header("Setup")
-    if st.button("Rebuild Vector Store"):
-        st.cache_resource.clear()
-        st.rerun()
-    st.info("Add PDFs to missile_pdfs/ and redeploy.")
+qa = init_qa()
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
-qa_chain = initialize_qa_chain()
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-if user_input := st.chat_input("Ask a question about missiles"):
+if user_input := st.chat_input("Ask a missile-related question"):
     st.session_state.messages.append({"role": "user", "content": user_input})
-
-    with st.chat_message("user"):
-        st.markdown(user_input)
 
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
-            response = qa_chain.run(user_input)
-        st.markdown(response)
+            response = qa.run(user_input)
+            st.markdown(response)
 
     st.session_state.messages.append(
         {"role": "assistant", "content": response}
