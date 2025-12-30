@@ -1,10 +1,18 @@
 streamlit
+
+# LangChain core + modular packages
 langchain
 langchain-community
+langchain-text-splitters
 langchain-chroma
 langchain-groq
-langchain-text-splitters
-sentence-transformers
+
+# Vector DB & embeddings
 chromadb
+sentence-transformers
+
+# PDF loading
 pymupdf
+
+# Env
 python-dotenv
