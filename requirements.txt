@@ -1,8 +1,8 @@
 streamlit
-python-dotenv
-sentence-transformers
-chromadb
-pymupdf
-
-langchain==0.0.353
+langchain
+langchain-community
+langchain-chroma
 langchain-groq
+sentence-transformers
+pymupdf
+chromadb
