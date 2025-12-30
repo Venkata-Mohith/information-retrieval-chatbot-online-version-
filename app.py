@@ -70,8 +70,8 @@ def setup_vector_store():
             embedding=embeddings,
             persist_directory=persist_dir
         )
-        db.persist()
-
+        
+    st.success("Vector store ready")
     return db.as_retriever(search_kwargs={"k": 3})
 
 # -------------------------------------------------
